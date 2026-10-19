@@ -1,7 +1,4 @@
-# 🧹 Data Sheet → Cleanse → Database Loader (n8n)
-
-![Workflow canvas screenshot]([docs/workflow-canvas.png](https://github.com/jr-nunez-dev/n8n-automation-workflows-pipelines/blob/main/Data%20Operations/Data%20Sheet%20-%20Cleanse%20-%20Database%20Loader/Data%20Sheet%20-%20Cleanse%20-%20Database%20Loader.png))
-<!-- TODO: add a screenshot of the n8n canvas at docs/workflow-canvas.png -->
+# 🧹 Data Sheet → Cleanse → Database Loader
 
 ---
 
