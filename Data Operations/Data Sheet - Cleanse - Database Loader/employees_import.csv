@@ -1,0 +1,8 @@
+record_id,full_name,email,department,age,active,created_at
+EMP-001,Maria Santos,MARIA@EXAMPLE.COM,IT,28,TRUE,2026-10-01
+EMP-002,John Reyes,john@example.com,Network,34,yes,2026-10-02
+EMP-003,Ana Cruz,not-an-email,Finance,25,TRUE,2026-10-03
+EMP-004,(Empty),missingname@example.com,IT,29,TRUE,2026-10-04
+EMP-005,Pedro Lim,pedro@example.com,Operations,abc,FALSE,2026-10-05
+EMP-006,Liza Tan,liza@example.com,HR,31,TRUE,2026-10-06
+EMP-001,Duplicate ID,duplicate@example.com,IT,30,TRUE,2026-10-07
