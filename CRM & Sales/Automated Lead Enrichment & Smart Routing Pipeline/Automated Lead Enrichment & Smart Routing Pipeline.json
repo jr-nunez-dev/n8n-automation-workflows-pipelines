@@ -1,0 +1,651 @@
+{
+  "name": "Smart Inbound Lead Triaging Engine (Sandbox)",
+  "nodes": [
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6ac7215b-bb78-454c-aff8-0b512313f1b2",
+              "name": "Domain",
+              "value": "={{ $json.Email.split('@')[1] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1168,
+        48
+      ],
+      "id": "d388120b-9fd6-4763-9ca9-3bd00a4099b9",
+      "name": "Get Domain"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Get the incoming data from the Loop Fixer node\nconst items = $input.all();\n\n// 2. Map through all 10 data items without dropping any\nconst scoredLeads = items.map(item => {\n  const root = item.json;\n  \n  // Dynamic Check: Handle zipped structure from the Loop Fixer or direct node input safely\n  const formData = root.form_data || root;\n  const crmData = root.crm_match || {};\n\n  // Extract fields cleanly, prioritizing CRM data if a match exists, otherwise falling back to Form Data\n  const rawEmail = formData[\"Email\"] || crmData.email || \"\";\n  const companyWebsite = crmData.website || formData[\"Domain\"] || \"unknown.com\";\n  const city = crmData.address?.city || \"Unknown\";\n\n  // Establish base scoring metrics\n  let leadScore = 50; // Everyone starts at 50 points\n  let tier = \"Tier 2 (Mid-Market)\";\n\n  // RULE 1: Check for high-value enterprise domains\n  if (companyWebsite.includes('.org') || companyWebsite.includes('.net') || companyWebsite.includes('enterprise')) {\n    leadScore += 35; // Major enterprise target bonus\n  }\n\n  // RULE 2: Filter out generic/spam emails\n  if (rawEmail.toLowerCase().includes('gmail') || rawEmail.toLowerCase().includes('yahoo')) {\n    leadScore -= 40; \n  }\n\n  // RULE 3: Add bonus based on geographic parameters \n  if (city !== \"Unknown\") {\n    leadScore += 10;\n  }\n\n  // 3. Categorize the lead into a final Tier based on total score\n  if (leadScore >= 80) {\n    tier = \"Tier 1 (Enterprise)\";\n  } else if (leadScore < 40) {\n    tier = \"Tier 3 (Low Priority/Nurture)\";\n  }\n\n  // 4. Return the enriched object, preserving the structural blocks for downstream routers\n  return {\n    json: {\n      ...root, // CRITICAL: Keeps form_data and crm_match intact so Duplicate Detector still works!\n      lead_info: {\n        first_name: formData[\"First Name\"] || \"\",\n        last_name: formData[\"Last Name\"] || \"\",\n        email: rawEmail,\n        company_domain: companyWebsite,\n        city: city\n      },\n      scoring_metrics: {\n        final_score: leadScore,\n        assigned_tier: tier,\n        processed_at: new Date().toISOString()\n      }\n    }\n  };\n});\n\nreturn scoredLeads;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -288,
+        176
+      ],
+      "id": "dc28182b-fe77-466f-bac2-e0e38a932215",
+      "name": "The Risk & Fit Scorer"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('The Risk & Fit Scorer').item.json.scoring_metrics.final_score }}",
+                    "rightValue": 80,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    },
+                    "id": "5d28b5b4-f32f-40d2-9937-a5cf269cebc4"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Enterprise"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "c125ea63-71a5-4852-94c3-bfa6c2fe9a19",
+                    "leftValue": "={{ $('The Risk & Fit Scorer').item.json.scoring_metrics.final_score >= 40 && $('The Risk & Fit Scorer').item.json.scoring_metrics.final_score <= 79 }}",
+                    "rightValue": "=79",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Mid-Market"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "9a9444bf-92da-4bb8-b68a-8a8f8427cc9f",
+                    "leftValue": "={{ $('The Risk & Fit Scorer').item.json.scoring_metrics.final_score }}",
+                    "rightValue": 40,
+                    "operator": {
+                      "type": "number",
+                      "operation": "lt"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Low Priority/Nurture"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        256
+      ],
+      "id": "70dbfc68-552c-46a6-8052-37fdf37d9dc2",
+      "name": "Tier Classifier"
+    },
+    {
+      "parameters": {
+        "url": "https://jsonplaceholder.typicode.com/users/1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "=Domain",
+              "value": "={{ $json.Domain }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        272
+      ],
+      "id": "9cf7b792-d04f-4ae4-bc18-ae3c8a30cc15",
+      "name": "Clearbit, ZoomInfo, or Apollo Mock"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        160
+      ],
+      "id": "a4eee63f-e92b-47df-82fc-a26d266dc663",
+      "name": "Combine Output"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3058e554-6a78-4bf0-9868-cd5209db5ddf",
+              "name": "Notification",
+              "value": "Change and connect to a slack/message for alert here.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        160
+      ],
+      "id": "cc8a5b90-4709-44bb-a5a0-ded624c3a2d4",
+      "name": "For Notificatons"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "075de605-f743-4672-aefb-a2c3d14e8928",
+              "name": "Message",
+              "value": "Creates an immediate, high-priority Deal record and assigns an owner.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        544,
+        48
+      ],
+      "id": "cc4ae966-8492-4ce8-bb40-75f0870dabb5",
+      "name": "Salesforce / Hubspot Node"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3d1232ca-2d06-4de6-b8fe-bce9b7ca7e75",
+              "name": "Message",
+              "value": "Logs it as a standard card for the inbound team to review within 24 hours.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        544,
+        272
+      ],
+      "id": "bbf1fc17-be92-453b-b484-c6745df84ee1",
+      "name": "Pipedrive / Trello Node"
+    },
+    {
+      "parameters": {
+        "url": "=https://jsonplaceholder.typicode.com/users?email={{ $json.Email }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -944,
+        48
+      ],
+      "id": "86629c8f-9e98-4ede-b1be-7e1013613d43",
+      "name": "CRM Search",
+      "executeOnce": false,
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "82ac4b2c-b3fa-415b-88d2-82c7a307caff",
+              "leftValue": "={{ $json.crm_match?.id ? 1 : 0 }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -544,
+        48
+      ],
+      "id": "191a42d4-f0d5-4e8c-9b2f-8dfe238108dc",
+      "name": "Duplicate Detector"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "25568bd6-2659-4a4e-98d1-f39aa3863796",
+              "name": "Lead Exists",
+              "value": "Update data in the table",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        -224
+      ],
+      "id": "26bd1076-bbff-4f1a-94cc-b9559d574d86",
+      "name": "Update Sheet Node"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Grab all incoming items from the preceding node\nconst items = $input.all();\n\n// 2. Map through the array and correctly extract the root fields\nreturn items.map(item => {\n  const data = item.json;\n\n  return {\n    json: {\n      status: \"warning\",\n      system_action: \"We Detect a duplicate ID, Will Update the Sheet/Database\",\n      timestamp: new Date().toISOString(),\n      lead_details: {\n        // Explicitly map from the current item, or use the global n8n syntax to look back at 'CRM Search'\n        email: data.email || $('CRM Search').first().json.email || \"No Email Found\",\n        name: data.name || $('CRM Search').first().json.name || \"Unknown\"\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        -224
+      ],
+      "id": "9408adfb-6744-4afe-864e-476333e4198d",
+      "name": "Message to Team"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "924587ea-ae8c-4564-8fd9-c98f1ac71a65",
+              "leftValue": "={{ $json.crm_match?.company?.name || $json.crm_match?.email }}",
+              "rightValue": "\\.org|\\.net|Romaguera|Enterprise|Corp",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -288,
+        -96
+      ],
+      "id": "ba6de97a-554e-45ad-8f90-33b57e018c46",
+      "name": "High Value Duplicate?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4c72a00a-3502-4786-aa44-e0f52aabbd6e",
+              "name": "Message",
+              "value": "Update the lead row quietly into a spreadsheet for automated monthly email marketing blasts.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "bc4f0fa3-f0d7-4e58-a548-77b9ba7248d1",
+      "name": "Update Sheet T3"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "4c72a00a-3502-4786-aa44-e0f52aabbd6e",
+              "name": "Message",
+              "value": "Appends the lead row quietly into a spreadsheet for automated monthly email marketing blasts.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        544,
+        496
+      ],
+      "id": "fce7f593-d5bc-49e3-84cb-7296d18fea1f",
+      "name": "Append Sheet T3"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      \"First Name\": \"John\",\n      \"Last Name\": \"Doe\",\n      \"Email\": \"johndoe@enterprise.com\",\n      \"Contact Number\": \"123456789\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:10:00.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Jane\",\n      \"Last Name\": \"Smith\",\n      \"Email\": \"janesmith@startup.io\",\n      \"Contact Number\": \"987654321\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:12:15.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Alex\",\n      \"Last Name\": \"Jones\",\n      \"Email\": \"alex.jones@gmail.com\",\n      \"Contact Number\": \"555123456\",\n      \"Previous Employee?\": [\"YES\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:15:30.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Sincere\",\n      \"Last Name\": \"April\",\n      \"Email\": \"Sincere@april.biz\",\n      \"Contact Number\": \"1770736803\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:20:00.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Leanne\",\n      \"Last Name\": \"Graham\",\n      \"Email\": \"Sincere@april.biz\",\n      \"Contact Number\": \"1770736803\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:21:00.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Michael\",\n      \"Last Name\": \"Scott\",\n      \"Email\": \"mscott@dundermifflin.com\",\n      \"Contact Number\": \"5705550199\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:25:45.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"David\",\n      \"Last Name\": \"Wallace\",\n      \"Email\": \"dwallace@dundermifflin.com\",\n      \"Contact Number\": \"2125550144\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:28:10.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Spammy\",\n      \"Last Name\": \"McSpam\",\n      \"Email\": \"test12345@qq.com\",\n      \"Contact Number\": \"999999999\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Ineligible\",\n      \"submittedAt\": \"2026-07-09T10:30:00.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Sarah\",\n      \"Last Name\": \"Connor\",\n      \"Email\": \"sconnor@cyberdyne.sys\",\n      \"Contact Number\": \"3105550182\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:35:18.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  },\n  {\n    json: {\n      \"First Name\": \"Bruce\",\n      \"Last Name\": \"Wayne\",\n      \"Email\": \"bwayne@wayneenterprises.com\",\n      \"Contact Number\": \"Gotham123\",\n      \"Previous Employee?\": [\"NO\"],\n      \"Eligible for work?\": \"Eligible\",\n      \"submittedAt\": \"2026-07-09T10:40:22.000+02:00\",\n      \"formMode\": \"test\"\n    }\n  }   \n  \n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        48
+      ],
+      "id": "c31cbc4a-2a9d-4a4c-901b-72c5646620a1",
+      "name": "Test Data"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1648,
+        48
+      ],
+      "id": "ee1dba7b-50a7-4209-b257-2bb735f08fea",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crmItems = $input.all();\nconst testDataItems = $('Test Data').all();\n\nreturn testDataItems.map((formItem, index) => {\n  return {\n    json: {\n      form_data: formItem.json,\n      crm_match: crmItems[index]?.json || {}\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        48
+      ],
+      "id": "b1976861-e9fa-4e19-a3ed-2e990fd1ccb3",
+      "name": "Loop Fixer"
+    },
+    {
+      "parameters": {
+        "content": "🚀 Automated Lead Enrichment & Smart Routing Pipeline\n\nAn advanced, batch-optimized **n8n automation workflow** designed to ingest inbound lead submissions, check for existing database records, score profile matches, enrich missing data points using external APIs, and route leads dynamically based on value tiers.\n\n---\n\n## 🛠️ System Architecture Overview\n\nThe pipeline handles data linearly before branching into two specialized processing tracks to prevent data drops, optimize API consumption, and maximize sales efficiency.\n\n```text\n               ┌───────────┐    ┌────────────┐    ┌─────────────┐\n               │ Test Data │───►│ Get Domain │───►│ CRM Search  │\n               └───────────┘    └────────────┘    └─────────────┘\n                                                         │\n                                                         ▼\n┌──────────────────────┐    ┌──────────────────┐    ┌───────────┐\n│ Duplicate Detector   │◄───│ Loop Fixer (JS)  │◄───│  (Zips)   │\n└──────────────────────┘    └──────────────────┘    └───────────┘\n     │               │\n     ▼ (True)        ▼ (False)\n [ CRM Duplicates ]   [ New Leads Lane ]\n\n```\n\n---\n\n## 📝 Node-by-Node Documentation\n\n### 1. Ingestion & Data Preparation\n\n* **Trigger Node:** Kicks off the execution flow. In production, this is swapped for an **Inbound Webhook** or active form listener.\n* **Test Data Node:** Ingests raw mock data objects (e.g., 10 entries) containing essential identifiers like `First Name`, `Last Name`, and `Email`.\n* **Get Domain Node:** Strips email strings down to their core corporate domains (e.g., `enterprise.com`) to enable high-level organizational mapping.\n\n### 2. Identity Resolution & State Recovery\n\n* **CRM Search (HTTP Request):** Performs a dynamic lookup against the historical database using the lead's email. New users safely return empty objects `{}`.\n* **Code in JavaScript (Loop Fixer):** > **Critical Failure Prevention:** n8n natively drops remaining batch structures when dynamic HTTP nodes encounter an empty result. This 3-line JavaScript block zips the original submission data with the CRM output to preserve array structures across all elements.\n* **Duplicate Detector (Router):** Evaluates if a CRM match exists based on `crm_match.id`.\n* **True Branch:** Passes existing accounts to the CRM Duplicates route.\n* **False Branch:** Passes brand-new leads to the Enrichment lane.\n\n\n\n---\n\n## 🔀 Processing Lanes\n\n### 🟢 Lane A: CRM Duplicates (Top Track)\n\nDesigned to surface returning clients without burning extra API credits on data enrichment.\n\n* **High Value Duplicate?:** Scans existing CRM profile metadata using a Regular Expression signature match (`Enterprise|Mid-Market|Tier 1`).\n* **Hot Action Paths:** High-value duplicates trigger an immediate Slack/Teams **Message to Team** notification, while low-value duplicates automatically route to a baseline nurture sheet.\n\n### 🔵 Lane B: New Leads Lane (Bottom Track)\n\nDesigned to score, evaluate, and provision newly discovered market opportunities.\n\n#### 🧮 Lead Scorer Algorithm Logic\n\nThe JavaScript scoring block processes every incoming item dynamically across a $100$-point scale:\n\n$$\\text{Final Score} = 50 \\,(\\text{Base}) + \\Delta_{\\text{Domain}} + \\Delta_{\\text{Email}} + \\Delta_{\\text{Location}}$$\n\n* **Rule 1 (Firmographic Match):** Corporate extensions (`.org`, `.net`) or specific enterprise keywords add **+35 points**.\n* **Rule 2 (Spam/Generic Filter):** Public email addresses (`gmail.com`, `yahoo.com`) subtract **-40 points**.\n* **Rule 3 (Geographic Bonus):** Verified city data locations add **+10 points**.\n\n```text\n         Score >= 80   ──►  Tier 1 (Enterprise)\n   40 <= Score <= 79   ──►  Tier 2 (Mid-Market)\n         Score < 40    ──►  Tier 3 (Low Priority / Junk)\n\n```\n\n#### 🔌 Enrichment & Tiering\n\n* **Data Enrichment (Clearbit/ZoomInfo Mock):** Queries third-party APIs to backfill firmographic data for newly qualified leads.\n* **Tier Classifier (Switch Node):** Reads `{{ $json.scoring_metrics.final_score }}` and splits execution pipelines natively.\n* **CRM Provisioning:** Provision high/mid tiers directly into active pipeline databases (**Salesforce / Hubspot / Pipedrive**) while dropping Tier 3 spam leads into an archive table.\n\n---\n\n## 🚀 Deployment & Local Testing\n\n1. **Import Workflow:** Copy your workspace JSON and paste it directly onto an empty n8n canvas.\n2. **Environment Targets:** Update the placeholder URLs in the **CRM Search** and **Enrichment** blocks to point to your live system endpoints.\n3. **Execute:** Click **Execute workflow** on the main navigation panel to monitor the data streams across the routing tables in real-time.",
+        "height": 2096,
+        "width": 1952
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -3680,
+        -880
+      ],
+      "id": "6db9dea7-6454-494f-9c85-98d9967cf9d2",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Get Domain": {
+      "main": [
+        [
+          {
+            "node": "CRM Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "The Risk & Fit Scorer": {
+      "main": [
+        [
+          {
+            "node": "Clearbit, ZoomInfo, or Apollo Mock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clearbit, ZoomInfo, or Apollo Mock": {
+      "main": [
+        [
+          {
+            "node": "Tier Classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tier Classifier": {
+      "main": [
+        [
+          {
+            "node": "Salesforce / Hubspot Node",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pipedrive / Trello Node",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append Sheet T3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Output": {
+      "main": [
+        [
+          {
+            "node": "For Notificatons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salesforce / Hubspot Node": {
+      "main": [
+        [
+          {
+            "node": "Combine Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pipedrive / Trello Node": {
+      "main": [
+        [
+          {
+            "node": "Combine Output",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "CRM Search": {
+      "main": [
+        [
+          {
+            "node": "Loop Fixer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate Detector": {
+      "main": [
+        [
+          {
+            "node": "High Value Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "The Risk & Fit Scorer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Sheet Node": {
+      "main": [
+        [
+          {
+            "node": "Message to Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High Value Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Update Sheet Node",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Sheet T3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Test Data": {
+      "main": [
+        [
+          {
+            "node": "Get Domain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Test Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Fixer": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Detector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "ce85465a-1fee-4cad-9518-784556464814",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "dff061bc3c380400a4adcd35369e48669eb2b46de5ce5cb4effb0d2c7761d8e2"
+  },
+  "nodeGroups": [],
+  "id": "6zDDZXwO1vfyoZtV",
+  "tags": []
+}
